@@ -25,7 +25,7 @@ spec:
         - name: ghcr-secret
       containers:
         - name: truthgraph-backend
-          image: ghcr.io/dhootraghav/truthgraph-backend:v1
+          image: ghcr.io/dhootraghav/truthgraph-backend:v3
           imagePullPolicy: IfNotPresent
 
           ports:

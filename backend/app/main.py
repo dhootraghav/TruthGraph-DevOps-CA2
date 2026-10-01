@@ -1,6 +1,7 @@
 import logging
 import time
-
+from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
+from fastapi.responses import Response
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -13,6 +14,17 @@ from app.pipeline import VerificationPipeline
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 logger = logging.getLogger("truth")
+REQUEST_COUNT = Counter(
+    "truthgraph_http_requests_total",
+    "Total number of HTTP requests",
+    ["method", "path", "status"],
+)
+
+REQUEST_LATENCY = Histogram(
+    "truthgraph_http_request_duration_seconds",
+    "HTTP request latency in seconds",
+    ["method", "path"],
+)
 
 app = FastAPI(title="Truth Verification Engine", version="0.1.0")
 settings = get_settings()
@@ -33,7 +45,21 @@ def get_pipeline() -> VerificationPipeline:
 async def request_logging(request: Request, call_next):
     start = time.perf_counter()
     response = await call_next(request)
-    elapsed_ms = round((time.perf_counter() - start) * 1000, 2)
+
+    elapsed_seconds = time.perf_counter() - start
+    elapsed_ms = round(elapsed_seconds * 1000, 2)
+
+    REQUEST_COUNT.labels(
+        method=request.method,
+        path=request.url.path,
+        status=str(response.status_code),
+    ).inc()
+
+    REQUEST_LATENCY.labels(
+        method=request.method,
+        path=request.url.path,
+    ).observe(elapsed_seconds)
+
     logger.info(
         {
             "event": "request_completed",
@@ -43,6 +69,7 @@ async def request_logging(request: Request, call_next):
             "elapsed_ms": elapsed_ms,
         }
     )
+
     return response
 
 
@@ -50,6 +77,12 @@ async def request_logging(request: Request, call_next):
 async def truth_engine_exception_handler(_: Request, exc: TruthEngineError) -> JSONResponse:
     return JSONResponse(status_code=502, content=ErrorResponse(detail=str(exc)).model_dump())
 
+@app.get("/metrics")
+async def metrics():
+    return Response(
+        content=generate_latest(),
+        media_type=CONTENT_TYPE_LATEST,
+    )
 
 @app.get("/health")
 async def health() -> dict[str, str]:
